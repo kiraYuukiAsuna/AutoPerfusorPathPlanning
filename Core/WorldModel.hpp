@@ -1,15 +1,16 @@
 #pragma once
 
-#include "Position.hpp"
-#include "AgentNeedle.hpp"
-#include "Path.hpp"
-#include "Constraint.hpp"
-#include <vector>
+#include <algorithm>
 #include <map>
-#include <set>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <vector>
 
+#include "AgentNeedle.hpp"
+#include "Constraint.hpp"
+#include "Path.hpp"
+#include "Position.hpp"
 
 enum class TaskState { Pending, Assigned, Working, Completed, Failed };
 
