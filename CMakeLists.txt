@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets 3DCore 3DRender 3DExtras 3DInput 3DLogic)
 
 set(HEADERS
     Core/Conflict.hpp
@@ -20,12 +20,15 @@ set(HEADERS
     Planner/CBS.h
     Planner/AStarSearch.h
 
+    UI/TestMainWindow.h
 )
 
 set(SOURCES
     Planner/CBS.cpp
     Planner/AStarSearch.cpp
 
+    UI/TestMainWindow.cpp
+    UI/main.cpp
 )
 
 
@@ -39,4 +42,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Widgets
+    Qt6::3DCore
+    Qt6::3DRender
+    Qt6::3DExtras
+    Qt6::3DInput
+    Qt6::3DLogic
 )
