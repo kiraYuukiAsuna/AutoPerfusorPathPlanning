@@ -1,23 +1,10 @@
 #include "TestMainWindow.h"
+#include "GLWidget.h"
 #include "../Core/WorldModel.hpp"
 #include "../Core/AgentNeedle.hpp"
 #include "../Planner/AStarSearch.h"
 #include "../Planner/CBS.h"
-
-// Qt 3D includes
-#include <Qt3DExtras/Qt3DWindow>
-#include <Qt3DCore/QEntity>
-#include <Qt3DRender/QCamera>
-#include <Qt3DExtras/QOrbitCameraController>
-#include <Qt3DExtras/QPhongMaterial>
-#include <Qt3DExtras/QCylinderMesh>
-#include <Qt3DExtras/QSphereMesh>
-#include <Qt3DExtras/QCuboidMesh>
-#include <Qt3DCore/QTransform>
-#include <Qt3DRender/QCameraLens>
-#include <Qt3DRender/QDirectionalLight>
 #include <QVector3D>
-#include <QQuaternion>
 #include <QTextEdit>
 #include <QListWidget>
 #include <QPushButton>
@@ -40,6 +27,7 @@
 #include <QRandomGenerator>
 #include <QElapsedTimer>
 #include <QtGlobal>
+#include <unordered_set>
 
 TestMainWindow::TestMainWindow(QWidget* parent)
         : QMainWindow(parent),
@@ -47,10 +35,8 @@ TestMainWindow::TestMainWindow(QWidget* parent)
             isAnimating(false), animationStep(0), animationSpeed(100),
             // visualization
             showGrid(true), showPaths(true), showAgents(true), showObstacles(true),
-            // Qt3D pointers
-            view3D(nullptr), container3D(nullptr), rootEntity(nullptr), gridEntity(nullptr),
-            obstaclesEntity(nullptr), agentsEntity(nullptr), pathsEntity(nullptr),
-            camera(nullptr), cameraController(nullptr) {
+            // OpenGL widget
+            glWidget(nullptr) {
 
     setWindowTitle("Path Planning Algorithm Test UI");
     resize(1400, 900);
@@ -80,9 +66,7 @@ void TestMainWindow::setupUI() {
     centralLayout->setContentsMargins(0, 0, 0, 0);
 
     setup3DScene();
-    container3D = QWidget::createWindowContainer(view3D);
-    container3D->setFocusPolicy(Qt::StrongFocus);
-    centralLayout->addWidget(container3D);
+    centralLayout->addWidget(glWidget);
 
     // Control panel dock
     QDockWidget* controlDock = new QDockWidget("Control Panel", this);
@@ -323,25 +307,20 @@ void TestMainWindow::createMenuBar() {
     zoomInAction->setShortcut(QKeySequence::ZoomIn);
     connect(zoomInAction, &QAction::triggered, [this]() {
         cameraDistance = qMax(5.0f, cameraDistance * 0.8f);
-        if (camera)
-            camera->setPosition(QVector3D(0.0f, cameraDistance, cameraDistance));
+        if (glWidget) glWidget->zoom(0.8f);
     });
 
     QAction* zoomOutAction = viewMenu->addAction("Zoom &Out");
     zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(zoomOutAction, &QAction::triggered, [this]() {
         cameraDistance = cameraDistance * 1.25f;
-        if (camera)
-            camera->setPosition(QVector3D(0.0f, cameraDistance, cameraDistance));
+        if (glWidget) glWidget->zoom(1.25f);
     });
 
     QAction* resetViewAction = viewMenu->addAction("&Reset View");
     connect(resetViewAction, &QAction::triggered, [this]() {
         cameraDistance = 80.0f;
-        if (camera) {
-            camera->setPosition(QVector3D(0.0f, cameraDistance, cameraDistance));
-            camera->setViewCenter(QVector3D(0.0f, 0.0f, 0.0f));
-        }
+        if (glWidget) glWidget->resetView();
     });
 }
 
@@ -410,6 +389,7 @@ void TestMainWindow::onRunAStarTest() {
     if (!path.wayPoints.empty()) {
         // Convert path to visualization format
         agent.path.clear();
+        agent.voxelPath = path.wayPoints;
         for (const auto& tp : path.wayPoints) {
             Position pos = worldModel->voxelToWorld(tp.voxel);
             agent.path.push_back(QPointF(pos.x, pos.y));
@@ -423,7 +403,8 @@ void TestMainWindow::onRunAStarTest() {
         lastStats.success = stats.pathFound;
 
         logMessage(QString("A* search completed successfully in %1 seconds").arg(elapsed), "success");
-    logMessage(QString("Path length: %1, Nodes explored: %2").arg(stats.pathLength).arg(stats.nodesExplored), "info");
+        logMessage(QString("Path length: %1, Nodes explored: %2").arg(stats.pathLength).arg(stats.nodesExplored), "info");
+        dumpObstaclesAndPaths();
 
         updateVisualization();
         updateStatistics();
@@ -461,6 +442,7 @@ void TestMainWindow::onRunCBSTest() {
         // Convert paths to visualization format
         for (size_t i = 0; i < paths.size() && i < testAgents.size(); ++i) {
             testAgents[i].path.clear();
+            testAgents[i].voxelPath = paths[i].wayPoints;
             for (const auto& tp : paths[i].wayPoints) {
                 Position pos = worldModel->voxelToWorld(tp.voxel);
                 testAgents[i].path.push_back(QPointF(pos.x, pos.y));
@@ -474,8 +456,9 @@ void TestMainWindow::onRunCBSTest() {
         lastStats.computationTime = elapsed;
         lastStats.success = stats.solutionFound;
 
-        logMessage(QString("CBS planning completed successfully in %1 seconds").arg(elapsed), "success");
+    logMessage(QString("CBS planning completed successfully in %1 seconds").arg(elapsed), "success");
         logMessage(QString("CBS nodes: %1, Conflicts resolved: %2").arg(stats.cbsNodesExplored).arg(stats.conflictsResolved), "info");
+    dumpObstaclesAndPaths();
 
         updateVisualization();
         updateStatistics();
@@ -492,13 +475,112 @@ void TestMainWindow::onRunCBSTest() {
     }
 }
 
+void TestMainWindow::dumpObstaclesAndPaths() {
+    if (!worldModel) return;
+    // Dump UI obstacles and WorldModel obstacles, then compare
+    logMessage("--- Dump Obstacles (UI world -> voxel) ---", "info");
+    std::vector<Voxel> uiObstacleVoxels;
+    uiObstacleVoxels.reserve(obstacles.size());
+    for (size_t i = 0; i < obstacles.size(); ++i) {
+        const QPointF& o = obstacles[i];
+        Voxel v = worldModel->worldToVoxel(Position(o.x(), o.y(), 0));
+        uiObstacleVoxels.push_back(v);
+        logMessage(QString("UI Obs %1: world=(%2,%3,0) -> voxel=(%4,%5,%6)")
+                   .arg(i)
+                   .arg(o.x(), 0, 'f', 3)
+                   .arg(o.y(), 0, 'f', 3)
+                   .arg(v.x).arg(v.y).arg(v.z), "info");
+    }
+
+    auto modelObstacleVoxels = worldModel->getStaticObstacles();
+    logMessage(QString("--- WorldModel Obstacles (%1 voxels) ---").arg(modelObstacleVoxels.size()), "info");
+    // Build a quick lookup set for model obstacles
+    std::unordered_set<Voxel> modelObsSet(modelObstacleVoxels.begin(), modelObstacleVoxels.end());
+
+    // Report any mismatch between UI list and WorldModel set
+    int mismatches = 0;
+    for (const auto& v : uiObstacleVoxels) {
+        if (!modelObsSet.count(v)) {
+            logMessage(QString("WARNING: UI obstacle voxel (%1,%2,%3) not in WorldModel")
+                           .arg(v.x).arg(v.y).arg(v.z),
+                       "warning");
+            mismatches++;
+        }
+    }
+    // Also check voxels present in model but not in UI
+    std::unordered_set<Voxel> uiObsSet(uiObstacleVoxels.begin(), uiObstacleVoxels.end());
+    for (const auto& v : modelObstacleVoxels) {
+        if (!uiObsSet.count(v)) {
+            logMessage(QString("NOTE: WorldModel-only obstacle voxel (%1,%2,%3)")
+                           .arg(v.x).arg(v.y).arg(v.z),
+                       "info");
+        }
+    }
+
+    if (mismatches > 0) {
+        logMessage(QString("Found %1 obstacle mismatches between UI and WorldModel").arg(mismatches), "warning");
+    }
+
+    logMessage("--- Dump Paths (world -> voxel) ---", "info");
+    for (size_t ai = 0; ai < testAgents.size(); ++ai) {
+        const auto& a = testAgents[ai];
+        // 优先使用离散的体素路径，避免由worldToVoxel舍入导致的偏差
+        if (!a.voxelPath.empty()) {
+            logMessage(QString("Agent %1 voxel path (%2 pts)").arg(a.id).arg(a.voxelPath.size()), "info");
+            for (size_t pi = 0; pi < a.voxelPath.size(); ++pi) {
+                const auto& tp = a.voxelPath[pi];
+                const Voxel& v = tp.voxel;
+                Position wp = worldModel->voxelToWorld(v);
+                logMessage(QString("  %1: voxel=(%2,%3,%4) -> world=(%5,%6,%7) t=%8")
+                               .arg(pi)
+                               .arg(v.x)
+                               .arg(v.y)
+                               .arg(v.z)
+                               .arg(wp.x, 0, 'f', 3)
+                               .arg(wp.y, 0, 'f', 3)
+                               .arg(wp.z, 0, 'f', 3)
+                               .arg(tp.time),
+                           "info");
+                if (modelObsSet.count(v)) {
+                    logMessage(QString("    -> WARNING: path point collides with obstacle voxel (%1,%2,%3)")
+                                   .arg(v.x)
+                                   .arg(v.y)
+                                   .arg(v.z),
+                               "warning");
+                }
+            }
+        } else {
+            logMessage(QString("Agent %1 path (%2 pts)").arg(a.id).arg(a.path.size()), "info");
+            for (size_t pi = 0; pi < a.path.size(); ++pi) {
+                const QPointF& p = a.path[pi];
+                Voxel v = worldModel->worldToVoxel(Position(p.x(), p.y(), 0));
+                logMessage(QString("  %1: world=(%2,%3,0) -> voxel=(%4,%5,%6)")
+                               .arg(pi)
+                               .arg(p.x(), 0, 'f', 3)
+                               .arg(p.y(), 0, 'f', 3)
+                               .arg(v.x)
+                               .arg(v.y)
+                               .arg(v.z),
+                           "info");
+                if (modelObsSet.count(v)) {
+                    logMessage(QString("    -> WARNING: path point collides with obstacle voxel (%1,%2,%3)")
+                                   .arg(v.x)
+                                   .arg(v.y)
+                                   .arg(v.z),
+                               "warning");
+                }
+            }
+        }
+    }
+}
+
 void TestMainWindow::onClearScene() {
-    clearGroup(obstaclesEntity);
-    clearAgents3D();
-    clearPaths3D();
     testAgents.clear();
     obstacles.clear();
     currentPaths.clear();
+    if (worldModel) {
+        worldModel->clearStaticObstacles();
+    }
     agentListWidget->clear();
     pathListWidget->clear();
     updateVisualization();
@@ -783,208 +865,64 @@ void TestMainWindow::onShowObstaclesToggled(bool checked) {
 }
 
 void TestMainWindow::updateVisualization() {
-    clearGroup(gridEntity);
-    clearGroup(obstaclesEntity);
-    clearPaths3D();
-    clearAgents3D();
+    if (!glWidget) return;
+    glWidget->setWorldSize(spinWorldX->value(), spinWorldY->value(), spinWorldZ->value(), spinVoxelSize->value());
+    glWidget->setShowFlags(showGrid, showObstacles, showAgents, showPaths);
 
-    if (showGrid) drawGrid3D();
-    if (showObstacles) drawObstacles3D();
-    if (showAgents) drawAgents3D();
-    if (showPaths) drawPaths3D();
+    // obstacles as (x, worldZcenter, y)
+    std::vector<QVector3D> obs;
+    float unitH = qMax(1, spinVoxelSize->value());
+    obs.reserve(obstacles.size());
+    for (const auto& o : obstacles) {
+        Voxel v = worldModel->worldToVoxel(Position(o.x(), o.y(), 0));
+        Position c = worldModel->voxelToWorld(v);
+        obs.emplace_back(o.x(), float(c.z), o.y());
+    }
+    glWidget->setObstacles(obs);
+
+    // agents: 使用体素中心的世界Z作为立方体中心高度
+    std::vector<QVector3D> starts, goals; std::vector<QColor> colors;
+    starts.reserve(testAgents.size()); goals.reserve(testAgents.size()); colors.reserve(testAgents.size());
+    for (const auto& a : testAgents) {
+        Voxel sv = worldModel->worldToVoxel(Position(a.start.x(), a.start.y(), 0));
+        Voxel gv = worldModel->worldToVoxel(Position(a.goal.x(), a.goal.y(), 0));
+        Position sw = worldModel->voxelToWorld(sv);
+        Position gw = worldModel->voxelToWorld(gv);
+        // GL 中 y 分量是高度（世界Z）
+        starts.emplace_back(a.start.x(), float(sw.z), a.start.y());
+        goals.emplace_back(a.goal.x(), float(gw.z), a.goal.y());
+        colors.push_back(a.color);
+    }
+    glWidget->setAgents(starts, goals, colors);
+
+    // paths
+    std::vector<GLWidget::AgentPath> glPaths; glPaths.reserve(testAgents.size());
+    for (const auto& a : testAgents) {
+        GLWidget::AgentPath p; p.id = a.id; p.color = a.color; p.animIndex = a.animIndex;
+        if (!a.voxelPath.empty()) {
+            p.waypoints.reserve(a.voxelPath.size());
+            for (const auto& tp : a.voxelPath) {
+                // 将体素中心转世界坐标：X->x, Y->y, Z->z
+                Position wp = worldModel->voxelToWorld(tp.voxel);
+                // 我们的平面坐标用 (x,y) 放到场景的 (X,Z)，高度用 z 放到场景的 Y
+                p.waypoints.emplace_back(float(wp.x), float(wp.z), float(wp.y));
+            }
+        } else if (!a.path.empty()) {
+            // 回退：仅有2D路径时，仍然略抬高显示
+            p.waypoints.reserve(a.path.size());
+            for (const auto& q : a.path) p.waypoints.emplace_back(q.x(), unitH*0.2f, q.y());
+        }
+        if (!p.waypoints.empty()) glPaths.push_back(std::move(p));
+    }
+    glWidget->setPaths(glPaths);
 }
 
 void TestMainWindow::setup3DScene() {
-    if (view3D) return;
-    view3D = new Qt3DExtras::Qt3DWindow();
-    rootEntity = new Qt3DCore::QEntity();
-    view3D->setRootEntity(rootEntity);
-
-    // Camera
-    camera = view3D->camera();
-    camera->lens()->setPerspectiveProjection(45.0f, 16.0f/9.0f, 0.1f, 1000.0f);
-    camera->setPosition(QVector3D(0.0f, cameraDistance, cameraDistance));
-    camera->setViewCenter(QVector3D(0.0f, 0.0f, 0.0f));
-
-    // Orbit controller
-    cameraController = new Qt3DExtras::QOrbitCameraController(rootEntity);
-    cameraController->setLinearSpeed(50.0f);
-    cameraController->setLookSpeed(180.0f);
-    cameraController->setCamera(camera);
-
-    // Basic directional light
-    auto* lightEntity = new Qt3DCore::QEntity(rootEntity);
-    auto* light = new Qt3DRender::QDirectionalLight(lightEntity);
-    light->setColor(QColor(255, 255, 255));
-    light->setIntensity(0.8f);
-    light->setWorldDirection(QVector3D(-1.0f, -1.0f, -0.5f));
-    lightEntity->addComponent(light);
-
-    ensureSceneGroups();
+    if (glWidget) return;
+    glWidget = new GLWidget(this);
 }
 
-void TestMainWindow::ensureSceneGroups() {
-    if (!gridEntity) gridEntity = new Qt3DCore::QEntity(rootEntity);
-    if (!obstaclesEntity) obstaclesEntity = new Qt3DCore::QEntity(rootEntity);
-    if (!agentsEntity) agentsEntity = new Qt3DCore::QEntity(rootEntity);
-    if (!pathsEntity) pathsEntity = new Qt3DCore::QEntity(rootEntity);
-}
-
-void TestMainWindow::clearGroup(Qt3DCore::QEntity* group) {
-    if (!group) return;
-    const auto children = group->findChildren<Qt3DCore::QEntity*>(QString(), Qt::FindDirectChildrenOnly);
-    for (auto* child : children) {
-        child->setParent(static_cast<Qt3DCore::QNode*>(nullptr));
-        delete child;
-    }
-}
-
-static inline QVector3D toScenePos(float worldX, float worldY, int worldWidth, int worldHeight, float unit=1.0f) {
-    return QVector3D(worldX*unit - (worldWidth*unit)/2.0f, 0.0f, worldY*unit - (worldHeight*unit)/2.0f);
-}
-
-void TestMainWindow::drawGrid3D() {
-    ensureSceneGroups();
-    const int sizeX = spinWorldX->value();
-    const int sizeZ = spinWorldY->value();
-    const int step = qMax(1, spinVoxelSize->value());
-    const float unit = 1.0f;
-
-    auto material = new Qt3DExtras::QPhongMaterial(gridEntity);
-    material->setAmbient(QColor(200,200,200));
-
-    // Lines parallel to Z (varying X)
-    for (int x = 0; x <= sizeX; x += step) {
-        auto ent = new Qt3DCore::QEntity(gridEntity);
-        auto mesh = new Qt3DExtras::QCylinderMesh();
-        mesh->setRadius(0.02f);
-        mesh->setLength(sizeZ * unit);
-        auto tr = new Qt3DCore::QTransform();
-        tr->setRotation(QQuaternion::fromAxisAndAngle(QVector3D(1,0,0), 90));
-        tr->setTranslation(toScenePos(x, sizeZ/2.0f, sizeX, sizeZ, unit));
-        ent->addComponent(mesh);
-        ent->addComponent(material);
-        ent->addComponent(tr);
-    }
-
-    // Lines parallel to X (varying Z)
-    for (int z = 0; z <= sizeZ; z += step) {
-        auto ent = new Qt3DCore::QEntity(gridEntity);
-        auto mesh = new Qt3DExtras::QCylinderMesh();
-        mesh->setRadius(0.02f);
-        mesh->setLength(sizeX * unit);
-        auto tr = new Qt3DCore::QTransform();
-        tr->setRotation(QQuaternion::fromAxisAndAngle(QVector3D(0,0,1), 90));
-        tr->setTranslation(toScenePos(sizeX/2.0f, z, sizeX, sizeZ, unit));
-        ent->addComponent(mesh);
-        ent->addComponent(material);
-        ent->addComponent(tr);
-    }
-}
-
-void TestMainWindow::drawObstacles3D() {
-    ensureSceneGroups();
-    const float unit = 1.0f;
-    int size = qMax(1, spinVoxelSize->value());
-    for (const auto& obs : obstacles) {
-        auto ent = new Qt3DCore::QEntity(obstaclesEntity);
-        auto mesh = new Qt3DExtras::QCuboidMesh();
-        mesh->setXExtent(size*unit);
-        mesh->setYExtent(size*unit*0.5f);
-        mesh->setZExtent(size*unit);
-        auto mat = new Qt3DExtras::QPhongMaterial(ent);
-        mat->setDiffuse(QColor(90,90,90));
-        auto tr = new Qt3DCore::QTransform();
-        QVector3D pos = toScenePos(obs.x(), obs.y(), spinWorldX->value(), spinWorldY->value(), unit);
-        tr->setTranslation(QVector3D(pos.x(), mesh->yExtent()/2.0f, pos.z()));
-        ent->addComponent(mesh);
-        ent->addComponent(mat);
-        ent->addComponent(tr);
-    }
-}
-
-void TestMainWindow::drawAgents3D() {
-    ensureSceneGroups();
-    const float unit = 1.0f;
-    float radius = 0.4f * qMax(1, spinVoxelSize->value());
-    for (const auto& agent : testAgents) {
-        // Determine current position: if animating and have path, use current waypoint; else use start
-        QPointF current = agent.start;
-        if (!agent.path.empty()) {
-            int idx = qBound(0, agent.animIndex, static_cast<int>(agent.path.size()) - 1);
-            current = agent.path[idx];
-        }
-        auto ent = new Qt3DCore::QEntity(agentsEntity);
-        auto mesh = new Qt3DExtras::QSphereMesh();
-        mesh->setRadius(radius);
-        auto mat = new Qt3DExtras::QPhongMaterial(ent);
-        mat->setDiffuse(agent.color);
-        auto tr = new Qt3DCore::QTransform();
-        QVector3D pos = toScenePos(current.x(), current.y(), spinWorldX->value(), spinWorldY->value(), unit);
-        tr->setTranslation(QVector3D(pos.x(), radius, pos.z()));
-        ent->addComponent(mesh);
-        ent->addComponent(mat);
-        ent->addComponent(tr);
-
-        AgentVisual visual;
-        visual.entity = ent;
-        visual.transform = tr;
-        visual.material = mat;
-
-        // Goal marker as wireframe-ish cube (solid cube with different color)
-        auto goalEnt = new Qt3DCore::QEntity(agentsEntity);
-        auto goalMesh = new Qt3DExtras::QCuboidMesh();
-        goalMesh->setXExtent(radius*1.2f);
-        goalMesh->setYExtent(radius*1.2f);
-        goalMesh->setZExtent(radius*1.2f);
-        auto goalMat = new Qt3DExtras::QPhongMaterial(goalEnt);
-        goalMat->setDiffuse(agent.color.lighter(130));
-        auto goalTr = new Qt3DCore::QTransform();
-        QVector3D goalPos = toScenePos(agent.goal.x(), agent.goal.y(), spinWorldX->value(), spinWorldY->value(), unit);
-        goalTr->setTranslation(QVector3D(goalPos.x(), radius*1.2f/2.0f, goalPos.z()));
-        goalEnt->addComponent(goalMesh);
-        goalEnt->addComponent(goalMat);
-        goalEnt->addComponent(goalTr);
-
-        visual.goalEntity = goalEnt;
-        visual.goalTransform = goalTr;
-        agentVisuals[agent.id] = visual;
-    }
-}
-
-void TestMainWindow::drawPaths3D() {
-    ensureSceneGroups();
-    const float unit = 1.0f;
-    float thickness = 0.08f * qMax(1, spinVoxelSize->value());
-    for (const auto& agent : testAgents) {
-        if (agent.path.size() < 2) continue;
-        auto mat = new Qt3DExtras::QPhongMaterial(pathsEntity);
-        mat->setDiffuse(agent.color);
-        for (size_t i = 1; i < agent.path.size(); ++i) {
-            QPointF p0 = agent.path[i-1];
-            QPointF p1 = agent.path[i];
-            QVector3D a = toScenePos(p0.x(), p0.y(), spinWorldX->value(), spinWorldY->value(), unit);
-            QVector3D b = toScenePos(p1.x(), p1.y(), spinWorldX->value(), spinWorldY->value(), unit);
-            QVector3D d = b - a;
-            float len = d.length();
-            if (len <= 1e-4f) continue;
-            d.normalize();
-            // Cylinder along segment
-            auto segEnt = new Qt3DCore::QEntity(pathsEntity);
-            auto mesh = new Qt3DExtras::QCylinderMesh();
-            mesh->setRadius(thickness);
-            mesh->setLength(len);
-            auto tr = new Qt3DCore::QTransform();
-            // rotate Y-axis (0,1,0) to segment direction
-            QQuaternion rot = QQuaternion::rotationTo(QVector3D(0,1,0), d);
-            tr->setRotation(rot);
-            tr->setTranslation(a + d * (len/2.0f));
-            segEnt->addComponent(mesh);
-            segEnt->addComponent(mat);
-            segEnt->addComponent(tr);
-        }
-    }
-}
+// removed Qt3D-based helpers
 
 void TestMainWindow::updateStatistics() {
     QString statsText = QString("Nodes: %1 | Time: %2s | Success: %3")
@@ -1019,31 +957,8 @@ void TestMainWindow::onVisualizationUpdate() {
 }
 
 void TestMainWindow::updateAgentTransforms3D() {
-    const float unit = 1.0f;
-    float radius = 0.4f * qMax(1, spinVoxelSize->value());
-    for (const auto& agent : testAgents) {
-        auto it = agentVisuals.find(agent.id);
-        if (it == agentVisuals.end()) continue;
-        QPointF current = agent.start;
-        if (!agent.path.empty()) {
-            int idx = qBound(0, agent.animIndex, static_cast<int>(agent.path.size()) - 1);
-            current = agent.path[idx];
-        }
-        QVector3D pos = toScenePos(current.x(), current.y(), spinWorldX->value(), spinWorldY->value(), unit);
-        if (it->second.transform) {
-            it->second.transform->setTranslation(QVector3D(pos.x(), radius, pos.z()));
-        }
-    }
-}
-
-void TestMainWindow::clearAgents3D() {
-    for (auto& kv : agentVisuals) {
-        if (kv.second.entity) { kv.second.entity->setParent(static_cast<Qt3DCore::QNode*>(nullptr)); delete kv.second.entity; }
-        if (kv.second.goalEntity) { kv.second.goalEntity->setParent(static_cast<Qt3DCore::QNode*>(nullptr)); delete kv.second.goalEntity; }
-    }
-    agentVisuals.clear();
-}
-
-void TestMainWindow::clearPaths3D() {
-    clearGroup(pathsEntity);
+    if (!glWidget) return;
+    std::vector<int> indices; indices.reserve(testAgents.size());
+    for (const auto& a : testAgents) indices.push_back(a.animIndex);
+    glWidget->updateAgentAnimIndices(indices);
 }

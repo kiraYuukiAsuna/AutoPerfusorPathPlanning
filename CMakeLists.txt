@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
+
 project(NeedlePlanner VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -7,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets 3DCore 3DRender 3DExtras 3DInput 3DLogic)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets)
 
 set(HEADERS
     Core/Conflict.hpp
@@ -29,6 +30,7 @@ set(SOURCES
 
     UI/TestMainWindow.cpp
     UI/main.cpp
+    UI/GLWidget.cpp
 )
 
 
@@ -42,9 +44,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Widgets
-    Qt6::3DCore
-    Qt6::3DRender
-    Qt6::3DExtras
-    Qt6::3DInput
-    Qt6::3DLogic
+    Qt6::OpenGL
+    Qt6::OpenGLWidgets
 )

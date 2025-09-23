@@ -4,7 +4,8 @@
 #include <QTimer>
 #include <memory>
 #include <vector>
-#include <unordered_map>
+
+#include "../Core/Position.hpp" // for Voxel/TimePoint used in diagnostics
 
 QT_BEGIN_NAMESPACE
 class QTextEdit;
@@ -21,11 +22,8 @@ class WorldModel;
 class AStarSearch;
 class CBS;
 
-// Forward declarations for Qt 3D
-namespace Qt3DCore { class QEntity; }
-namespace Qt3DRender { class QCamera; }
-namespace Qt3DExtras { class Qt3DWindow; class QOrbitCameraController; class QPhongMaterial; }
-namespace Qt3DCore { class QTransform; }
+// Forward declaration for OpenGL widget
+class GLWidget;
 
 class TestMainWindow : public QMainWindow {
     Q_OBJECT
@@ -61,22 +59,15 @@ private:
     void createStatusBar();
     void initializeWorld();
     void updateVisualization();
-    // 3D helpers
+    // 3D helpers (OpenGL)
     void setup3DScene();
-    void ensureSceneGroups();
-    void clearGroup(Qt3DCore::QEntity* group);
-    void drawGrid3D();
-    void drawObstacles3D();
-    void drawAgents3D();
-    void drawPaths3D();
     void updateAgentTransforms3D();
-    void clearAgents3D();
-    void clearPaths3D();
     void logMessage(const QString& message, const QString& type = "info");
     void createTestScenarios();
     void loadScenario(int index);
     void runAStarVisualization();
     void runCBSVisualization();
+    void dumpObstaclesAndPaths();
     void animatePath(int agentId);
     void updateStatistics();
 
@@ -88,17 +79,9 @@ private:
     void setup3DScenario();
 
     // UI components
-    // 3D scene
-    Qt3DExtras::Qt3DWindow* view3D;
-    QWidget* container3D;
-    Qt3DCore::QEntity* rootEntity;
-    Qt3DCore::QEntity* gridEntity;
-    Qt3DCore::QEntity* obstaclesEntity;
-    Qt3DCore::QEntity* agentsEntity;
-    Qt3DCore::QEntity* pathsEntity;
-    Qt3DRender::QCamera* camera;
-    Qt3DExtras::QOrbitCameraController* cameraController;
-    float cameraDistance = 80.0f;
+    // 3D scene (OpenGL)
+    GLWidget* glWidget;
+    float cameraDistance = 80.0f; // mapped to GLWidget zoom
     QTextEdit* logWidget;
     QListWidget* agentListWidget;
     QListWidget* pathListWidget;
@@ -158,6 +141,8 @@ private:
         QPointF goal;
         QColor color;
         std::vector<QPointF> path;
+        // Full-resolution 3D path in voxel-time for accurate diagnostics
+        std::vector<TimePoint> voxelPath;
         // Current index along the path for animation (0..path.size()-1)
         int animIndex = 0;
     };
@@ -166,15 +151,7 @@ private:
     std::vector<QPointF> obstacles;
     std::vector<std::vector<QPointF>> currentPaths;
 
-    // Cached visuals for efficient animation updates
-    struct AgentVisual {
-        Qt3DCore::QEntity* entity = nullptr;       // sphere
-        Qt3DCore::QEntity* goalEntity = nullptr;   // cube for goal
-        Qt3DCore::QTransform* transform = nullptr;
-        Qt3DCore::QTransform* goalTransform = nullptr;
-        Qt3DExtras::QPhongMaterial* material = nullptr;
-    };
-    std::unordered_map<int, AgentVisual> agentVisuals; // key: agent id
+    // Cached visuals removed; GLWidget按帧更新
 
     // Statistics
     struct TestStats {

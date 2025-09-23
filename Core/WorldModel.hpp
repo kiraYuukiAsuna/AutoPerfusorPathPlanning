@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "AgentNeedle.hpp"
-#include "Constraint.hpp"
 #include "Path.hpp"
 #include "Position.hpp"
 
@@ -249,6 +248,16 @@ public:
     bool hasStaticObstacle(const Voxel& voxel) const {
         std::lock_guard<std::mutex> lock(m_Mutex);
         return m_StaticObstacles.find(voxel) != m_StaticObstacles.end();
+    }
+
+    std::vector<Voxel> getStaticObstacles() const {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return std::vector<Voxel>(m_StaticObstacles.begin(), m_StaticObstacles.end());
+    }
+
+    void clearStaticObstacles() {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_StaticObstacles.clear();
     }
 
     void setCurrentTime(int time) {
