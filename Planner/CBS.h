@@ -1,8 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <queue>
-#include <unordered_set>
 #include <vector>
 
 #include "AStarSearch.h"
@@ -10,7 +8,9 @@
 #include "Core/Constraint.hpp"
 #include "Core/Path.hpp"
 #include "Core/WorldModel.hpp"
-
+// Geometry and AgentNeedle are used in implementation (CBS.cpp)
+// #include "Core/Geometry.hpp"
+// #include "Core/AgentNeedle.hpp"
 
 struct CBSNode {
 	std::vector<Path> solution;
@@ -57,6 +57,7 @@ public:
 	// 设置参数
 	void setMaxCBSNodes(int maxNodes) { m_MaxCBSNodes = maxNodes; }
 	void setMaxSearchTime(int maxTime) { m_MaxSearchTime = maxTime; }
+	void setBodySamplesM(int m) { m_BodySamplesM = m; }
 
 	// 获取搜索统计信息
 	struct CBSStats {
@@ -76,6 +77,7 @@ private:
 	int m_MaxSearchTime;
 	int m_NextNodeId;
 	mutable CBSStats m_LastStats;
+	int m_BodySamplesM = 3;	 // 针身扫掠的时间采样次数
 
 	// 核心CBS算法函数
 	std::shared_ptr<CBSNode> createRootNode(const std::vector<AgentInfo>& agents);
@@ -87,6 +89,8 @@ private:
 	// 冲突检测辅助函数
 	bool hasVertexConflict(const Path& path1, const Path& path2, int time, Voxel& conflictVoxel);
 	bool hasEdgeConflict(const Path& path1, const Path& path2, int time, Voxel& voxel1, Voxel& voxel2);
+	bool hasBodyConflict(const Path& path1, const Path& path2, int time, Voxel& a_from, Voxel& a_to, Voxel& b_from,
+						 Voxel& b_to);
 
 	// 路径规划
 	Path planPath(int agentId, const Voxel& start, const Voxel& goal, int startTime,

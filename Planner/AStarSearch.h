@@ -1,17 +1,15 @@
 #pragma once
 
-#include <functional>
 #include <memory>
-#include <queue>
-#include <unordered_map>
-#include <unordered_set>
+#include <tuple>
 #include <vector>
 
+#include "Core/AgentNeedle.hpp"
 #include "Core/Constraint.hpp"
+#include "Core/Geometry.hpp"
 #include "Core/Path.hpp"
 #include "Core/Position.hpp"
 #include "Core/WorldModel.hpp"
-
 
 // AStar节点结构
 struct AStarNode {
@@ -51,6 +49,7 @@ public:
 	// 设置搜索参数
 	void setMaxSearchTime(int maxTime) { m_MaxSearchTime = maxTime; }
 	void setMaxSearchNodes(int maxNodes) { m_MaxSearchNodes = maxNodes; }
+	void setEnvSamplesK(int k) { m_EnvSamplesK = k; }
 
 	// 启发式函数类型
 	enum class HeuristicType {
@@ -89,6 +88,8 @@ private:
 	NeighborType m_NeighborType;
 	std::vector<std::tuple<int, int, int>> m_CustomOffsets;
 	mutable SearchStats m_LastStats;
+	// 连续碰撞采样参数（默认值，可后续暴露 setter）
+	int m_EnvSamplesK = 5;	// 每条边对环境的采样次数
 
 	// 辅助函数
 	double calculateHeuristic(const Voxel& from, const Voxel& to) const;
@@ -103,4 +104,9 @@ private:
 
 	// 移动代价计算
 	double getMoveCost(const Voxel& from, const Voxel& to) const;
+
+	// 连续几何检查：针身 vs 环境
+	bool bodyCollisionFreeWithEnvironment(int agentId, const TimePoint& from, const TimePoint& to) const;
+	// 构建当前时间采样下的胶囊（给定 tipWorld 与方向）
+	geom::Capsule makeNeedleCapsule(const AgentNeedle& agent, const Position& tipWorld, const Position& dirUnit) const;
 };

@@ -77,6 +77,17 @@ public:
         return nullptr;
 	}
 
+	// const 上下文的只读重载
+	std::shared_ptr<AgentNeedle> getAgentNeedle(int agentId) const {
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		for (const auto& agent : m_AgentNeedles) {
+			if (agent->agentId == agentId) {
+				return agent;
+			}
+		}
+		return nullptr;
+	}
+
 	std::vector<std::shared_ptr<AgentNeedle>> getIdleAgentNeedles() {
         std::lock_guard<std::mutex> lock(m_Mutex);
         std::vector<std::shared_ptr<AgentNeedle>> idleAgents;

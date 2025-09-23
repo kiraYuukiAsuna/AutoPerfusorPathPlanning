@@ -127,6 +127,12 @@ std::vector<Conflict> CBS::detectConflicts(const std::vector<Path>& paths) {
 					if (hasEdgeConflict(path1, path2, time, voxel1, voxel2)) {
 						conflicts.emplace_back(path1.agentId, path2.agentId, voxel1, voxel2, time, ConflictType::Edge);
 					}
+					// 检查针身扫掠冲突（返回发生冲突时的两个边的端点，用于后续添加 Edge 约束）
+					Voxel a_from, a_to, b_from, b_to;
+					if (hasBodyConflict(path1, path2, time, a_from, a_to, b_from, b_to)) {
+						// 用 Edge 冲突形式表达（禁止双方在该时间执行对应的 tip 过渡）
+						conflicts.emplace_back(path1.agentId, path2.agentId, a_from, a_to, time, ConflictType::Edge);
+					}
 				}
 			}
 		}
@@ -232,6 +238,55 @@ bool CBS::hasEdgeConflict(const Path& path1, const Path& path2, int time, Voxel&
 		}
 	}
 
+	return false;
+}
+
+// 针身冲突：对 [t,t+1] 做 M 次时间采样，构建两根针的胶囊并检测相交
+bool CBS::hasBodyConflict(const Path& path1, const Path& path2, int time, Voxel& a_from, Voxel& a_to, Voxel& b_from,
+						  Voxel& b_to) {
+	auto a_t = path1.getPositionAtTime(time);
+	auto a_t1 = path1.getPositionAtTime(time + 1);
+	auto b_t = path2.getPositionAtTime(time);
+	auto b_t1 = path2.getPositionAtTime(time + 1);
+	if (!a_t.has_value() || !a_t1.has_value() || !b_t.has_value() || !b_t1.has_value()) return false;
+
+	// 获取 agent 几何参数
+	auto aAgent = m_WorldModel.getAgentNeedle(path1.agentId);
+	auto bAgent = m_WorldModel.getAgentNeedle(path2.agentId);
+	if (!aAgent || !bAgent) return false;
+
+	// 世界坐标的 tip 位置
+	Position a_from_w = m_WorldModel.voxelToWorld(a_t->voxel);
+	Position a_to_w = m_WorldModel.voxelToWorld(a_t1->voxel);
+	Position b_from_w = m_WorldModel.voxelToWorld(b_t->voxel);
+	Position b_to_w = m_WorldModel.voxelToWorld(b_t1->voxel);
+
+	// 方向：移动或初始角度
+	Position a_dir = (a_t1->voxel != a_t->voxel)
+						 ? geom::normalize(a_to_w - a_from_w)
+						 : geom::normalize(geom::directionFromAngles(aAgent->angleHorizontal, aAgent->angleVertical));
+	if (a_dir == Position(0, 0, 0)) a_dir = Position(1, 0, 0);
+	Position b_dir = (b_t1->voxel != b_t->voxel)
+						 ? geom::normalize(b_to_w - b_from_w)
+						 : geom::normalize(geom::directionFromAngles(bAgent->angleHorizontal, bAgent->angleVertical));
+	if (b_dir == Position(0, 0, 0)) b_dir = Position(1, 0, 0);
+
+	int M = m_BodySamplesM;
+	for (int i = 0; i <= M; ++i) {
+		double tau = double(i) / double(M);
+		Position a_tip = geom::lerp(a_from_w, a_to_w, tau);
+		Position b_tip = geom::lerp(b_from_w, b_to_w, tau);
+
+		geom::Capsule ca{a_tip - a_dir * aAgent->bodyLength, a_tip, aAgent->bodyRadius};
+		geom::Capsule cb{b_tip - b_dir * bAgent->bodyLength, b_tip, bAgent->bodyRadius};
+		if (geom::capsuleIntersectsCapsule(ca, cb)) {
+			a_from = a_t->voxel;
+			a_to = a_t1->voxel;
+			b_from = b_t->voxel;
+			b_to = b_t1->voxel;
+			return true;
+		}
+	}
 	return false;
 }
 

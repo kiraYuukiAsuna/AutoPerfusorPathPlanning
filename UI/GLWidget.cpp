@@ -89,7 +89,8 @@ void GLWidget::paintGL() {
     if (showObstacles_) emitObstacles(batches);
     if (showAgents_) emitAgents(batches);
     if (showPaths_) emitPaths(batches);
-    drawBatches(batches);
+	if (showNeedles_) emitNeedles(batches);
+	drawBatches(batches);
 }
 
 void GLWidget::emitGrid(std::vector<Batch>& batches) {
@@ -183,6 +184,105 @@ void GLWidget::emitPaths(std::vector<Batch>& batches) {
     }
 }
 
+// 以简易方式绘制针身：
+// - 使用与路径相同的坐标契约：waypoint 的 (x,z) 为网格坐标（将经 toScene 映射到 X/Z），y 为世界高度（映射到场景 Y）
+// - 针尖取 animIndex 位置；方向优先由下一点（场景坐标）计算，退化时用角度估计
+// - 仅以线段表示（长度 bodyLength，单位=世界单位=voxelSize_ 缩放后的场景单位），半径以淡色十字提示
+void GLWidget::emitNeedles(std::vector<Batch>& batches) {
+	if (paths_.empty()) return;
+	const float unit = float(qMax(1, voxelSize_));
+
+	auto toScene3D = [&](const QVector3D& wp) -> QVector3D {
+		// 将 (gridX, height, gridY) -> 场景 (X, Y=height, Z)
+		QVector3D pos = toScene(wp.x() + 0.5f, wp.z() + 0.5f, sizeX_, sizeY_, unit);
+		return {pos.x(), wp.y(), pos.z()};
+	};
+
+	auto angDir = [](float h, float v) -> QVector3D {
+		// 与 Core/Geometry 中方向约定一致：水平角绕Z，垂直角为仰角
+		float ch = std::cos(h), sh = std::sin(h);
+		float cv = std::cos(v), sv = std::sin(v);
+		return QVector3D(cv * ch, sv, cv * sh);
+	};
+
+	for (const auto& p : paths_) {
+		if (p.waypoints.empty() || p.bodyLength <= 0.0f) continue;
+		int idx = std::clamp(p.animIndex, 0, int(p.waypoints.size()) - 1);
+
+		// 针尖（场景坐标）
+		QVector3D tipScene = toScene3D(p.waypoints[idx]);
+
+		// 方向（场景坐标下）
+		QVector3D dir;
+		if (idx + 1 < int(p.waypoints.size())) {
+			QVector3D nextScene = toScene3D(p.waypoints[idx + 1]);
+			dir = nextScene - tipScene;
+			if (dir.lengthSquared() > 1e-6f) dir.normalize();
+		}
+		if (dir.lengthSquared() < 1e-6f) {
+			dir = angDir(p.angleHorizontal, p.angleVertical);
+			if (dir.lengthSquared() > 1e-6f)
+				dir.normalize();
+			else
+				dir = QVector3D(1, 0, 0);
+		}
+
+		QVector3D tailScene = tipScene - dir * p.bodyLength;
+		float r = qMax(0.0f, p.bodyRadius);
+
+		// 计算AABB
+		QVector3D minPt, maxPt;
+		minPt.setX(std::min(tailScene.x(), tipScene.x()) - r);
+		minPt.setY(std::min(tailScene.y(), tipScene.y()) - r);
+		minPt.setZ(std::min(tailScene.z(), tipScene.z()) - r);
+		maxPt.setX(std::max(tailScene.x(), tipScene.x()) + r);
+		maxPt.setY(std::max(tailScene.y(), tipScene.y()) + r);
+		maxPt.setZ(std::max(tailScene.z(), tipScene.z()) + r);
+
+		// 8顶点
+		QVector3D p8[8];
+		p8[0] = {minPt.x(), minPt.y(), minPt.z()};
+		p8[1] = {maxPt.x(), minPt.y(), minPt.z()};
+		p8[2] = {maxPt.x(), maxPt.y(), minPt.z()};
+		p8[3] = {minPt.x(), maxPt.y(), minPt.z()};
+		p8[4] = {minPt.x(), minPt.y(), maxPt.z()};
+		p8[5] = {maxPt.x(), minPt.y(), maxPt.z()};
+		p8[6] = {maxPt.x(), maxPt.y(), maxPt.z()};
+		p8[7] = {minPt.x(), maxPt.y(), maxPt.z()};
+		int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+		int faces[6][4] = {{0, 1, 2, 3}, {4, 5, 6, 7}, {1, 5, 6, 2}, {0, 4, 7, 3}, {3, 2, 6, 7}, {0, 1, 5, 4}};
+
+		// 半透明盒体（填充），深度测试开
+		Batch boxFill;
+		boxFill.primitive = GL_TRIANGLES;
+		boxFill.color = QColor(255, 0, 255);
+		boxFill.alpha = 0.12f;
+		boxFill.depthTest = true;
+		for (auto& f : faces) {
+			boxFill.vertices.push_back(p8[f[0]]);
+			boxFill.vertices.push_back(p8[f[1]]);
+			boxFill.vertices.push_back(p8[f[2]]);
+			boxFill.vertices.push_back(p8[f[0]]);
+			boxFill.vertices.push_back(p8[f[2]]);
+			boxFill.vertices.push_back(p8[f[3]]);
+		}
+		batches.push_back(std::move(boxFill));
+
+		// 高对比度描边（线框），更粗线，关闭深度测试保证始终可见
+		Batch boxEdge;
+		boxEdge.primitive = GL_LINES;
+		boxEdge.color = QColor(255, 255, 255);
+		boxEdge.alpha = 0.9f;
+		boxEdge.lineWidth = 3.0f;
+		boxEdge.depthTest = false;
+		for (int i = 0; i < 12; ++i) {
+			boxEdge.vertices.push_back(p8[edges[i][0]]);
+			boxEdge.vertices.push_back(p8[edges[i][1]]);
+		}
+		batches.push_back(std::move(boxEdge));
+	}
+}
+
 void GLWidget::drawBatches(const std::vector<Batch>& batches) {
     if (batches.empty()) return;
     program_.bind();
@@ -196,7 +296,11 @@ void GLWidget::drawBatches(const std::vector<Batch>& batches) {
     int uAlphaLoc = program_.uniformLocation("uAlpha");
     for (const auto& b : batches) {
         if (b.vertices.empty()) continue;
-        program_.setUniformValue(uColorLoc_, QVector3D(b.color.redF(), b.color.greenF(), b.color.blueF()));
+		if (b.depthTest)
+			glEnable(GL_DEPTH_TEST);
+		else
+			glDisable(GL_DEPTH_TEST);
+		program_.setUniformValue(uColorLoc_, QVector3D(b.color.redF(), b.color.greenF(), b.color.blueF()));
         program_.setUniformValue(uAlphaLoc, b.alpha);
         glBufferData(GL_ARRAY_BUFFER, sizeof(QVector3D)*b.vertices.size(), b.vertices.data(), GL_DYNAMIC_DRAW);
         if (b.primitive == GL_LINES || b.primitive == GL_LINE_STRIP) {
@@ -214,7 +318,8 @@ void GLWidget::drawBatches(const std::vector<Batch>& batches) {
             glDisable(GL_POLYGON_OFFSET_FILL);
         }
     }
-    glDisableVertexAttribArray(0);
+	glEnable(GL_DEPTH_TEST);
+	glDisableVertexAttribArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
     program_.release();

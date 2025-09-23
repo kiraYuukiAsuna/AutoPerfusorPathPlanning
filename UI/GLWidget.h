@@ -24,17 +24,26 @@ public:
         QColor color;
         std::vector<QVector3D> waypoints; // y 作为高度
         int animIndex = 0;
-    };
+		// 额外信息用于绘制针身
+		float bodyLength = 0.0f;
+		float bodyRadius = 0.0f;	   // 当前仅用于显示提示，不做几何绘制
+		float angleHorizontal = 0.0f;  // 备用：当没有移动方向时使用
+		float angleVertical = 0.0f;	   // 备用：当没有移动方向时使用
+	};
 
-    void setObstacles(const std::vector<QVector3D>& obs);
+	void setObstacles(const std::vector<QVector3D>& obs);
     void setAgents(const std::vector<QVector3D>& starts,
                    const std::vector<QVector3D>& goals,
                    const std::vector<QColor>& colors);
     void setPaths(const std::vector<AgentPath>& paths);
     void updateAgentAnimIndices(const std::vector<int>& indices);
+	void setShowNeedles(bool show) {
+		showNeedles_ = show;
+		update();
+	}
 
-    // 简单相机控制
-    void resetView();
+	// 简单相机控制
+	void resetView();
     void zoom(float factor);
 
 protected:
@@ -54,14 +63,16 @@ private:
         float lineWidth = 1.0f;
         unsigned int primitive = 0; // GL_LINES, GL_LINE_STRIP, GL_TRIANGLES
         std::vector<QVector3D> vertices;
-    };
+		bool depthTest = true;	// 是否开启深度测试（用于让描边始终可见）
+	};
     void emitGrid(std::vector<Batch>& batches);
     void emitObstacles(std::vector<Batch>& batches);
     void emitAgents(std::vector<Batch>& batches);
     void emitPaths(std::vector<Batch>& batches);
-    void drawBatches(const std::vector<Batch>& batches);
+	void emitNeedles(std::vector<Batch>& batches);
+	void drawBatches(const std::vector<Batch>& batches);
 
-    // 矩阵
+	// 矩阵
     QMatrix4x4 proj_;
     QMatrix4x4 view_;
 
@@ -80,9 +91,10 @@ private:
     bool showObstacles_ = true;
     bool showAgents_ = true;
     bool showPaths_ = true;
+	bool showNeedles_ = true;
 
-    // 数据
-    std::vector<QVector3D> obstacles_;
+	// 数据
+	std::vector<QVector3D> obstacles_;
     std::vector<QVector3D> agentStarts_;
     std::vector<QVector3D> agentGoals_;
     std::vector<QColor> agentColors_;

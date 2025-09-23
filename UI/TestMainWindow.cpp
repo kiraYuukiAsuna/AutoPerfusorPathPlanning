@@ -22,12 +22,14 @@
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
+#include <QScrollArea>
 #include <QMessageBox>
 #include <QDateTime>
 #include <QRandomGenerator>
 #include <QElapsedTimer>
 #include <QtGlobal>
 #include <unordered_set>
+#include <cmath>
 
 TestMainWindow::TestMainWindow(QWidget* parent)
         : QMainWindow(parent),
@@ -70,8 +72,12 @@ void TestMainWindow::setupUI() {
 
     // Control panel dock
     QDockWidget* controlDock = new QDockWidget("Control Panel", this);
+    controlDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    controlDock->setFeatures(QDockWidget::DockWidgetMovable);
     QWidget* controlWidget = new QWidget();
     QVBoxLayout* controlLayout = new QVBoxLayout(controlWidget);
+    controlLayout->setContentsMargins(6, 6, 6, 6);
+    controlLayout->setSpacing(6);
 
     // Test controls group
     QGroupBox* testGroup = new QGroupBox("Algorithm Testing");
@@ -214,16 +220,20 @@ void TestMainWindow::setupUI() {
     checkShowAgents->setChecked(true);
     checkShowObstacles = new QCheckBox("Show Obstacles");
     checkShowObstacles->setChecked(true);
+    QCheckBox* checkShowNeedles = new QCheckBox("Show Needles (Body)");
+    checkShowNeedles->setChecked(true);
 
     connect(checkShowGrid, &QCheckBox::toggled, this, &TestMainWindow::onShowGridToggled);
     connect(checkShowPaths, &QCheckBox::toggled, this, &TestMainWindow::onShowPathsToggled);
     connect(checkShowAgents, &QCheckBox::toggled, this, &TestMainWindow::onShowAgentsToggled);
     connect(checkShowObstacles, &QCheckBox::toggled, this, &TestMainWindow::onShowObstaclesToggled);
+    connect(checkShowNeedles, &QCheckBox::toggled, [this](bool on){ if (glWidget) glWidget->setShowNeedles(on); });
 
     visLayout->addWidget(checkShowGrid);
     visLayout->addWidget(checkShowPaths);
     visLayout->addWidget(checkShowAgents);
     visLayout->addWidget(checkShowObstacles);
+    visLayout->addWidget(checkShowNeedles);
     visGroup->setLayout(visLayout);
 
     // Animation controls
@@ -255,7 +265,13 @@ void TestMainWindow::setupUI() {
     controlLayout->addWidget(animGroup);
     controlLayout->addStretch();
 
-    controlDock->setWidget(controlWidget);
+    // Wrap in a scroll area to handle long content
+    QScrollArea* scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setWidget(controlWidget);
+    controlDock->setWidget(scrollArea);
+    controlDock->setMinimumWidth(280);
     addDockWidget(Qt::LeftDockWidgetArea, controlDock);
 
     // Log dock
@@ -277,6 +293,15 @@ void TestMainWindow::setupUI() {
     pathListWidget = new QListWidget();
     pathDock->setWidget(pathListWidget);
     addDockWidget(Qt::RightDockWidgetArea, pathDock);
+
+    // Ensure left dock is visible with a reasonable width on startup
+    setDockNestingEnabled(true);
+    controlDock->show();
+    QTimer::singleShot(0, this, [this, controlDock]() {
+        int leftWidth = qMax(280, this->width() / 4);
+        this->resizeDocks({controlDock}, {leftWidth}, Qt::Horizontal);
+        controlDock->raise();
+    });
 
     // Statistics label
     lblStats = new QLabel("Ready");
@@ -623,16 +648,30 @@ void TestMainWindow::onAddAgent() {
     testAgents.push_back(agent);
 
     // Add to world model
+    // compute voxel tip from world start
+    Voxel tipVox = worldModel->worldToVoxel(Position(agent.start.x(), agent.start.y(), 0));
+    // derive a horizontal angle from start->goal (plane X-Y, mapped to GL X-Z)
+    double dx = agent.goal.x() - agent.start.x();
+    double dy = agent.goal.y() - agent.start.y();
+    double angleH = (std::abs(dx) + std::abs(dy)) > 1e-6 ? std::atan2(dy, dx) : 0.0; // radians
+    double angleV = 0.0; // flat by default
+    // default body params scaled by voxel size
+    double voxSize = worldModel ? worldModel->getVoxelSize() : double(spinVoxelSize->value());
+    double bodyRadius = 0.4 * voxSize;
+    double bodyLength = 5.0 * voxSize;
+    // map id -> dye color cycling 6 variants
+    DyeColor dye = static_cast<DyeColor>(agent.id % 6);
+
     auto agentNeedle = std::make_shared<AgentNeedle>(
-        agent.id,                                           // agentId
-        0.0,                                               // angleHorizontal (default to 0.0)
-        0.0,                                               // angleVertical (default to 0.0)
-        Voxel(agent.start.x(), agent.start.y(), 0),        // tipPosition (convert to Voxel)
-        1.0,                                               // bodyRadius (default to 1.0)
-        5.0,                                               // bodyLength (default to 5.0)
-        DyeColor::VColor1,                                 // dyeColor
-        NeedleState::Idle,                                 // state
-        -1                                                 // targetTaskId (default to -1)
+        agent.id,
+        angleH,
+        angleV,
+        tipVox,
+        bodyRadius,
+        bodyLength,
+        dye,
+        NeedleState::Idle,
+        -1
     );
     worldModel->addAgentNeedle(agentNeedle);
 
@@ -899,6 +938,16 @@ void TestMainWindow::updateVisualization() {
     std::vector<GLWidget::AgentPath> glPaths; glPaths.reserve(testAgents.size());
     for (const auto& a : testAgents) {
         GLWidget::AgentPath p; p.id = a.id; p.color = a.color; p.animIndex = a.animIndex;
+        // 读取针身参数（若存在）
+        if (worldModel) {
+            auto needle = worldModel->getAgentNeedle(a.id);
+            if (needle) {
+                p.bodyLength = float(needle->bodyLength);
+                p.bodyRadius = float(needle->bodyRadius);
+                p.angleHorizontal = float(needle->angleHorizontal);
+                p.angleVertical = float(needle->angleVertical);
+            }
+        }
         if (!a.voxelPath.empty()) {
             p.waypoints.reserve(a.voxelPath.size());
             for (const auto& tp : a.voxelPath) {

@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
-
+#include <functional>
+#include <queue>
+#include <unordered_map>
+#include <unordered_set>
 
 AStarSearch::AStarSearch(const WorldModel& worldModel)
 	: m_WorldModel(worldModel),
@@ -171,6 +174,11 @@ bool AStarSearch::isValidMove(int agentId, const TimePoint& from, const TimePoin
 		return false;
 	}
 
+	// 针身与环境的连续碰撞检查
+	if (!bodyCollisionFreeWithEnvironment(agentId, from, to)) {
+		return false;
+	}
+
 	return true;
 }
 
@@ -235,4 +243,78 @@ double AStarSearch::getMoveCost(const Voxel& from, const Voxel& to) const {
 
 	// 使用欧几里得距离作为移动代价
 	return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+geom::Capsule AStarSearch::makeNeedleCapsule(const AgentNeedle& agent, const Position& tipWorld,
+											 const Position& dirUnit) const {
+	// 针尖为 tipWorld，针尾沿 -dir 方向，长度 bodyLength
+	Position tail = tipWorld - dirUnit * agent.bodyLength;
+	geom::Capsule c{tail, tipWorld, agent.bodyRadius};
+	return c;
+}
+
+bool AStarSearch::bodyCollisionFreeWithEnvironment(int agentId, const TimePoint& from, const TimePoint& to) const {
+	// 获取 agent 与世界参数
+	auto agentPtr = m_WorldModel.getAgentNeedle(agentId);
+	if (!agentPtr) return true;	 // 若找不到 agent，保守起见放行（也可选择阻止）
+	const AgentNeedle& agent = *agentPtr;
+
+	// 位置插值：将体素中心转换为世界坐标
+	Position fromWorld = m_WorldModel.voxelToWorld(from.voxel);
+	Position toWorld = m_WorldModel.voxelToWorld(to.voxel);
+
+	// 方向推断：移动方向或初始角度
+	Position moveDirWorld = toWorld - fromWorld;
+	Position baseDirUnit;
+	if (to.voxel != from.voxel) {
+		baseDirUnit = geom::normalize(moveDirWorld);
+	} else {
+		baseDirUnit = geom::directionFromAngles(agent.angleHorizontal, agent.angleVertical);
+		baseDirUnit = geom::normalize(baseDirUnit);
+		if (baseDirUnit == Position(0, 0, 0)) baseDirUnit = Position(1, 0, 0);
+	}
+
+	// 采样 K 次（含端点），对每个采样构建胶囊并与障碍集合做粗判/细判
+	const int K = m_EnvSamplesK;
+	// 预取静态障碍体素，做粗筛：仅检查胶囊端点所在体素附近 r_vox 邻域
+	double voxSize = m_WorldModel.getVoxelSize();
+	int r_vox = std::max(1, (int)std::ceil(agent.bodyRadius / std::max(1e-9, voxSize)));
+
+	// 将障碍复制出来（WorldModel 提供 getStaticObstacles）
+	auto obstacles = m_WorldModel.getStaticObstacles();
+	if (obstacles.empty()) return true;
+
+	for (int i = 0; i <= K; ++i) {
+		double t = (double)i / (double)K;
+		Position tipWorld = geom::lerp(fromWorld, toWorld, t);
+		// 方向随 tip 插值：对移动边使用 moveDir；对等待保持 baseDirUnit
+		Position dirUnit = (to.voxel != from.voxel) ? baseDirUnit : baseDirUnit;
+
+		auto capsule = makeNeedleCapsule(agent, tipWorld, dirUnit);
+
+		// 根据胶囊端点 AABB 推导一个粗略盒，减少遍历
+		Position cmin(std::min(capsule.a.x, capsule.b.x) - capsule.r, std::min(capsule.a.y, capsule.b.y) - capsule.r,
+					  std::min(capsule.a.z, capsule.b.z) - capsule.r);
+		Position cmax(std::max(capsule.a.x, capsule.b.x) + capsule.r, std::max(capsule.a.y, capsule.b.y) + capsule.r,
+					  std::max(capsule.a.z, capsule.b.z) + capsule.r);
+
+		// 粗暴遍历所有障碍体素（如需更快可加索引/分区）。先做 AABB 快速拒绝，再 segment-盒距离。
+		for (const auto& vox : obstacles) {
+			// 体素 AABB（世界坐标）
+			auto bounds = m_WorldModel.getVoxelBounds(vox);
+			const Position& bmin = bounds.first;
+			const Position& bmax = bounds.second;
+
+			// 快速 AABB 相交测试
+			bool aabbDisjoint = (bmax.x < cmin.x || bmin.x > cmax.x || bmax.y < cmin.y || bmin.y > cmax.y || bmax.z < cmin.z ||
+								 bmin.z > cmax.z);
+			if (aabbDisjoint) continue;
+
+			if (geom::capsuleIntersectsAABB(capsule, bmin, bmax)) {
+				return false;  // 与环境相交，移动无效
+			}
+		}
+	}
+
+	return true;
 }
