@@ -113,21 +113,28 @@ void GLWidget::emitGrid(std::vector<Batch>& batches) {
 void GLWidget::emitObstacles(std::vector<Batch>& batches) {
     // 障碍物对齐到网格单元中心，并落地（底面 y=0）
     const float unit = float(qMax(1, voxelSize_));
-    const float boxSize = unit; // 一格一立方
+	const float boxSize = unit * 0.8f;	// 缩小尺寸以区分网格
 
-    auto emitBox = [&](const QVector3D& center, float size, const QColor& fill){
+	auto emitBox = [&](const QVector3D& center, float size, const QColor& fill){
         float x=center.x(), y=center.y(), z=center.z(); float hh=size*0.5f;
         QVector3D p[8]={{x-hh,y-hh,z-hh},{x+hh,y-hh,z-hh},{x+hh,y-hh,z+hh},{x-hh,y-hh,z+hh},
                         {x-hh,y+hh,z-hh},{x+hh,y+hh,z-hh},{x+hh,y+hh,z+hh},{x-hh,y+hh,z+hh}};
         int faces[][4]={{0,1,2,3},{4,5,6,7},{1,5,6,2},{0,4,7,3},{3,2,6,7},{0,1,5,4}};
-    Batch tri; tri.color = QColor(90,90,90); tri.alpha = 1.0f; tri.primitive = GL_TRIANGLES;
-        for(auto &f:faces){ tri.vertices.push_back(p[f[0]]); tri.vertices.push_back(p[f[1]]); tri.vertices.push_back(p[f[2]]);
+		Batch tri;
+		tri.color = QColor(120, 120, 120);
+		tri.alpha = 1.0f;
+		tri.primitive = GL_TRIANGLES;
+		for(auto &f:faces){ tri.vertices.push_back(p[f[0]]); tri.vertices.push_back(p[f[1]]); tri.vertices.push_back(p[f[2]]);
                              tri.vertices.push_back(p[f[0]]); tri.vertices.push_back(p[f[2]]); tri.vertices.push_back(p[f[3]]);}        
         batches.push_back(std::move(tri));
         // 高对比度白色描边
         int edges[][2]={{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
-        Batch line; line.color = QColor(255,255,255); line.alpha = 1.0f; line.primitive = GL_LINES; line.lineWidth = 3.0f;
-        for (auto &e:edges){ line.vertices.push_back(p[e[0]]); line.vertices.push_back(p[e[1]]);}    
+		Batch line;
+		line.color = QColor(255, 255, 255);
+		line.alpha = 1.0f;
+		line.primitive = GL_LINES;
+		line.lineWidth = 2.0f;
+		for (auto &e:edges){ line.vertices.push_back(p[e[0]]); line.vertices.push_back(p[e[1]]);}    
         batches.push_back(std::move(line));
     };
 

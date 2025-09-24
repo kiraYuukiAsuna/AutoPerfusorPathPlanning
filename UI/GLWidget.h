@@ -8,7 +8,6 @@
 #include <QColor>
 #include <vector>
 
-// macOS 的 OpenGL 驱动最高为 4.1 Core，接口与 4.5 用到的基础功能一致
 class GLWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_1_Core {
     Q_OBJECT
 public:

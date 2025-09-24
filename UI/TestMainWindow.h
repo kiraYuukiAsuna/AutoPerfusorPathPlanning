@@ -51,6 +51,7 @@ private slots:
     void onShowPathsToggled(bool checked);
     void onShowAgentsToggled(bool checked);
     void onShowObstaclesToggled(bool checked);
+	void onShowNeedlesToggled(bool checked);
 
 private:
     void setupUI();
@@ -145,7 +146,10 @@ private:
         std::vector<TimePoint> voxelPath;
         // Current index along the path for animation (0..path.size()-1)
         int animIndex = 0;
-    };
+		// 针体
+		float bodyLength = 0.0f;
+		float bodyRadius = 0.0f;
+	};
 
     std::vector<TestAgent> testAgents;
     std::vector<QPointF> obstacles;

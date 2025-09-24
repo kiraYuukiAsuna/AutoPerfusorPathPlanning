@@ -227,9 +227,9 @@ void TestMainWindow::setupUI() {
     connect(checkShowPaths, &QCheckBox::toggled, this, &TestMainWindow::onShowPathsToggled);
     connect(checkShowAgents, &QCheckBox::toggled, this, &TestMainWindow::onShowAgentsToggled);
     connect(checkShowObstacles, &QCheckBox::toggled, this, &TestMainWindow::onShowObstaclesToggled);
-    connect(checkShowNeedles, &QCheckBox::toggled, [this](bool on){ if (glWidget) glWidget->setShowNeedles(on); });
+	connect(checkShowNeedles, &QCheckBox::toggled, this, &TestMainWindow::onShowNeedlesToggled);
 
-    visLayout->addWidget(checkShowGrid);
+	visLayout->addWidget(checkShowGrid);
     visLayout->addWidget(checkShowPaths);
     visLayout->addWidget(checkShowAgents);
     visLayout->addWidget(checkShowObstacles);
@@ -654,9 +654,9 @@ void TestMainWindow::onAddAgent() {
     double dx = agent.goal.x() - agent.start.x();
     double dy = agent.goal.y() - agent.start.y();
     double angleH = (std::abs(dx) + std::abs(dy)) > 1e-6 ? std::atan2(dy, dx) : 0.0; // radians
-    double angleV = 0.0; // flat by default
-    // default body params scaled by voxel size
-    double voxSize = worldModel ? worldModel->getVoxelSize() : double(spinVoxelSize->value());
+	double angleV = 60;																 // flat by default
+	// default body params scaled by voxel size
+	double voxSize = worldModel ? worldModel->getVoxelSize() : double(spinVoxelSize->value());
     double bodyRadius = 0.4 * voxSize;
     double bodyLength = 5.0 * voxSize;
     // map id -> dye color cycling 6 variants
@@ -902,6 +902,8 @@ void TestMainWindow::onShowObstaclesToggled(bool checked) {
     showObstacles = checked;
     updateVisualization();
 }
+
+void TestMainWindow::onShowNeedlesToggled(bool checked) { glWidget->setShowNeedles(checked); }
 
 void TestMainWindow::updateVisualization() {
     if (!glWidget) return;

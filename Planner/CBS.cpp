@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <queue>
 
 
 CBS::CBS(const WorldModel& worldModel)
