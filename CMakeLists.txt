@@ -49,3 +49,15 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::OpenGL
     Qt6::OpenGLWidgets
 )
+
+# ---- Core library (Planner only, no UI/Qt) ----
+add_library(PlannerCore STATIC
+    Planner/CBS.cpp
+    Planner/AStarSearch.cpp
+)
+target_include_directories(PlannerCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ---- Tests (console, no Qt) ----
+add_executable(NeedleCollisionTest tests/NeedleCollisionTest.cpp)
+target_include_directories(NeedleCollisionTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(NeedleCollisionTest PRIVATE PlannerCore)

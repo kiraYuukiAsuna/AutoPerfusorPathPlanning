@@ -256,7 +256,7 @@ geom::Capsule AStarSearch::makeNeedleCapsule(const AgentNeedle& agent, const Pos
 bool AStarSearch::bodyCollisionFreeWithEnvironment(int agentId, const TimePoint& from, const TimePoint& to) const {
 	// 获取 agent 与世界参数
 	auto agentPtr = m_WorldModel.getAgentNeedle(agentId);
-	if (!agentPtr) return true;	 // 若找不到 agent，保守起见放行（也可选择阻止）
+	if (!agentPtr) return false;	 // 若找不到 agent，保守起见阻止
 	const AgentNeedle& agent = *agentPtr;
 
 	// 位置插值：将体素中心转换为世界坐标
